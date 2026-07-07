@@ -348,7 +348,7 @@ html, body {
 .line-chip.off .chip-dot { background: #ccc; }
 
 /* ---------------------------------------------------------------------------
-   CartoMetro overlay controls
+   Map overlay controls
    --------------------------------------------------------------------------- */
 
 #overlay-section { margin-top: 12px; padding-top: 10px; border-top: 1px solid #eee; }
@@ -356,11 +356,6 @@ html, body {
 .overlay-row     { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
 .overlay-row input[type=checkbox] { accent-color: #0b0f2a; width: 13px; height: 13px; flex-shrink: 0; cursor: pointer; }
 .overlay-row label { font-size: 12px; color: #444; cursor: pointer; }
-
-#opacity-row          { display: none; align-items: center; gap: 7px; }
-#opacity-row .slider-lbl { font-size: 11px; color: #888; width: 46px; flex-shrink: 0; }
-#carto-opacity        { flex: 1; accent-color: #0b0f2a; cursor: pointer; }
-#opacity-val          { font-size: 11px; color: #555; width: 32px; text-align: right; flex-shrink: 0; }
 
 /* ---------------------------------------------------------------------------
    Leaflet overrides
@@ -472,16 +467,6 @@ html, body {
         <div class="overlay-row">
           <input type="checkbox" id="tap-arcs-toggle" checked onchange="setTapArcsVisible(this.checked)">
           <label for="tap-arcs-toggle">Turnaround direction arcs</label>
-        </div>
-        <div class="overlay-row">
-          <input type="checkbox" id="carto-toggle" onchange="toggleCartoOverlay(this.checked)">
-          <label for="carto-toggle">CartoMetro geographic map</label>
-        </div>
-        <div id="opacity-row">
-          <span class="slider-lbl">Opacity</span>
-          <input type="range" id="carto-opacity" min="5" max="95" value="45"
-                 oninput="setCartoOpacity(+this.value)">
-          <span id="opacity-val">45%</span>
         </div>
       </div>
     </div>
@@ -770,8 +755,7 @@ L.control.zoom({ position: 'topright' }).addTo(map);
 
 L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' +
-               ' &copy; <a href="https://carto.com/">CARTO</a>' +
-               ' | Map overlay &copy; <a href="https://cartometro.com" target="_blank">cartometro.com</a>',
+               ' &copy; <a href="https://carto.com/">CARTO</a>',
   subdomains: 'abcd',
   maxZoom:    19,
 }).addTo(map);
@@ -1323,138 +1307,6 @@ function removeFailure(id) {
 function resetAll() {
   activeFailures.length = 0;
   redrawAll(); renderPanel();
-}
-
-// ---------------------------------------------------------------------------
-// § 13  CartoMetro live tile overlay
-// ---------------------------------------------------------------------------
-//
-// Tiles are fetched directly from cartometro.com at the resolution that matches
-// the current Leaflet zoom level, eliminating pixelation at high zoom.
-// Requires an internet connection (no image is embedded in the HTML).
-//
-// Tile URL format (discovered from cartometro.com/cartes/metro-tram-london/index.php):
-//   /images-maps/z{z}/s300/x{tx}/y{ty}/carto_metrolondon_{z}_300_{tx}_{ty}.png?x=4.7
-// tx, ty are pixel offsets (multiples of 300) within the full image at CartoMetro zoom z.
-
-const CM_BOUNDS = {
-  sw: [51.333514869144, -0.62351850820788],   // [lat, lng]
-  ne: [51.722513665129,  0.27780482787186],
-};
-
-// Full image dimensions [width, height] at CartoMetro zoom levels 0–7
-const CM_DIMS = [
-  [263, 183], [527, 368], [1053, 730], [2106, 1461],
-  [4213, 2923], [8426, 5846], [16852, 11692], [33704, 23384],
-];
-
-const cmMerY = lat => Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360));
-
-/** Map Leaflet zoom to the CartoMetro zoom that provides ≥1 image pixel per screen pixel. */
-function cmZoomFor(leafletZ) {
-  const thresholds = [8, 9, 10, 11, 12, 13, 14];
-  const i = thresholds.findIndex(t => leafletZ <= t);
-  return i >= 0 ? i : 7;
-}
-
-/** Convert geographic coordinates to pixel offsets in the CartoMetro image at zoom z. */
-function latlngToCMpx(lat, lng, z) {
-  const [W, H]           = CM_DIMS[z];
-  const [swLat, swLng]   = CM_BOUNDS.sw;
-  const [neLat, neLng]   = CM_BOUNDS.ne;
-  const px = (lng - swLng) / (neLng - swLng) * W;
-  const py = (cmMerY(neLat) - cmMerY(lat)) / (cmMerY(neLat) - cmMerY(swLat)) * H;
-  return [px, py];
-}
-
-const CartoMetroTiles = L.GridLayer.extend({
-  /**
-   * Render a Leaflet tile by compositing the CartoMetro 300×300 tiles that
-   * overlap its geographic area onto a canvas.  Handles partial tiles at the
-   * edges of the CartoMetro coverage area gracefully.
-   */
-  createTile(coords, done) {
-    const ts     = this.getTileSize();
-    const canvas = document.createElement('canvas');
-    canvas.width = ts.x; canvas.height = ts.y;
-    const ctx    = canvas.getContext('2d');
-
-    const bounds = this._tileCoordsToBounds(coords);
-    const z      = cmZoomFor(coords.z);
-    const [W, H] = CM_DIMS[z];
-
-    // Leaflet tile geographic bounds → CartoMetro pixel range
-    // x (longitude) is linear; y uses Mercator (north = small py, south = large py)
-    const pxW = latlngToCMpx(bounds.getNorth(), bounds.getWest(), z)[0];
-    const pxE = latlngToCMpx(bounds.getNorth(), bounds.getEast(), z)[0];
-    const pyN = latlngToCMpx(bounds.getNorth(), bounds.getWest(), z)[1];
-    const pyS = latlngToCMpx(bounds.getSouth(), bounds.getWest(), z)[1];
-
-    if (pxE <= 0 || pxW >= W || pyS <= 0 || pyN >= H) {
-      done(null, canvas); return canvas;  // tile is outside CartoMetro coverage
-    }
-
-    const totalW  = pxE - pxW;
-    const totalH  = pyS - pyN;
-    const txStart = Math.floor(Math.max(0, pxW) / 300) * 300;
-    const txEnd   = Math.ceil(Math.min(W, pxE)  / 300) * 300;
-    const tyStart = Math.floor(Math.max(0, pyN) / 300) * 300;
-    const tyEnd   = Math.ceil(Math.min(H, pyS)  / 300) * 300;
-
-    let pending = 0;
-
-    for (let tx = txStart; tx < txEnd; tx += 300) {
-      for (let ty = tyStart; ty < tyEnd; ty += 300) {
-        const sx = Math.max(0, pxW - tx);
-        const sy = Math.max(0, pyN - ty);
-        const sw = Math.min(300, pxE - tx) - sx;
-        const sh = Math.min(300, pyS - ty) - sy;
-        if (sw <= 0 || sh <= 0) continue;
-
-        const dx = (tx + sx - pxW) / totalW * ts.x;
-        const dy = (ty + sy - pyN) / totalH * ts.y;
-        const dw = sw / totalW * ts.x;
-        const dh = sh / totalH * ts.y;
-
-        const url = `https://cartometro.com/images-maps/z${z}/s300/x${tx}/y${ty}` +
-                    `/carto_metrolondon_${z}_300_${tx}_${ty}.png?x=4.7`;
-        pending++;
-        const img = new Image();
-        // crossOrigin intentionally omitted: we only display, never read pixel data,
-        // so the browser allows drawImage without CORS headers on the tile server.
-        img.onload  = () => { ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh); if (--pending === 0) done(null, canvas); };
-        img.onerror = () => { if (--pending === 0) done(null, canvas); };
-        img.src = url;
-      }
-    }
-    if (pending === 0) done(null, canvas);
-    return canvas;
-  },
-});
-
-// Custom pane between the tile pane (z=200) and overlay pane (z=400) keeps
-// CartoMetro tiles above the basemap but below all transit vectors.
-map.createPane('cartoMetroPane');
-map.getPane('cartoMetroPane').style.zIndex        = 300;
-map.getPane('cartoMetroPane').style.pointerEvents = 'none';
-
-const cartoOverlay = new CartoMetroTiles({
-  opacity:     0.45,
-  tileSize:    300,
-  noWrap:      true,
-  pane:        'cartoMetroPane',
-  attribution: '&copy; <a href="https://cartometro.com" target="_blank">cartometro.com</a>',
-});
-
-function toggleCartoOverlay(show) {
-  const opacityRow = document.getElementById('opacity-row');
-  if (show) { cartoOverlay.addTo(map); opacityRow.style.display = 'flex'; }
-  else       { map.removeLayer(cartoOverlay); opacityRow.style.display = 'none'; }
-}
-
-function setCartoOpacity(pct) {
-  cartoOverlay.setOpacity(pct / 100);
-  document.getElementById('opacity-val').textContent = `${pct}%`;
 }
 
 // ---------------------------------------------------------------------------
