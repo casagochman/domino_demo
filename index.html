@@ -423,13 +423,13 @@ html, body {
       </div>
     </div>
 
-    <!-- Line visibility filter (collapsed by default) -->
+    <!-- Line visibility filter (open by default) -->
     <div id="lines-section">
-      <div class="filter-header" id="lines-header" onclick="toggleLinesPanel()">
+      <div class="filter-header open" id="lines-header" onclick="toggleLinesPanel()">
         <span>Lines</span>
         <span class="filter-chevron">&#9660;</span>
       </div>
-      <div id="lines-body">
+      <div id="lines-body" class="open">
         <div class="filter-actions">
           <button class="flt-btn" onclick="setAllLines(true)">Show all</button>
           <button class="flt-btn" onclick="setAllLines(false)">Hide all</button>
